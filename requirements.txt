@@ -1,0 +1,2 @@
+rabbitpy==2.0.1
+pydantic==2.5.0

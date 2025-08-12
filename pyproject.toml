@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "simple_queue"
+version = "0.1.0"
+description = "A simple RabbitMQ streaming library"
+readme = "README.md"
+requires-python = ">=3.7"
+license = {text = "MIT"}
+authors = [
+    {name = "Alex", email = "alex@example.com"},
+]
+keywords = ["rabbitmq", "streaming", "messaging", "queue"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.7",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: System :: Networking",
+    "Topic :: Communications",
+]
+dependencies = [
+    "rabbitpy==2.0.1",
+    "pydantic==2.5.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=6.0",
+    "pytest-cov>=2.0",
+    "black>=21.0",
+    "flake8>=3.8",
+    "mypy>=0.800",
+]
+
+[project.scripts]
+simple-queue-consumer = "simple_queue.examples.consumer_example:main"
+simple-queue-publisher = "simple_queue.examples.publisher_example:main"
+
+[project.urls]
+Homepage = "https://github.com/yourusername/simple_queue"
+Repository = "https://github.com/yourusername/simple_queue"
+Issues = "https://github.com/yourusername/simple_queue/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["simple_queue*"]
+
+[tool.setuptools.package-data]
+simple_queue = ["py.typed"]
+
+[tool.pytest.ini_options]
+filterwarnings = [
+    "ignore:'locale.getdefaultlocale' is deprecated:DeprecationWarning:rabbitpy.channel0"
+]
