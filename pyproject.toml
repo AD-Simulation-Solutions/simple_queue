@@ -59,6 +59,24 @@ include = ["simple_queue*"]
 simple_queue = ["py.typed"]
 
 [tool.pytest.ini_options]
-filterwarnings = [
-    "ignore:'locale.getdefaultlocale' is deprecated:DeprecationWarning:rabbitpy.channel0"
+minversion = "6.0"
+addopts = "-ra -q --strict-markers --cov=simple_queue --cov-report=html --cov-report=term --timeout=60"
+testpaths = [
+  "tests",
 ]
+
+[tool.yapf]
+based_on_style = "pep8"
+indent_width = 2
+column_limit = 150
+
+[tool.flake8]
+max-line-length = 150
+extend-ignore = ["E203", "W503", "E111", "E114"]
+indent-size = 2
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true

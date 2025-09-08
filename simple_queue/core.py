@@ -3,7 +3,7 @@ import json
 import time
 import logging
 from contextlib import contextmanager
-from typing import Optional, Any, Generator, Union
+from typing import Optional, Any, Generator, Union, Dict
 
 log = logging.getLogger(__name__)
 
@@ -20,7 +20,7 @@ class QueueNotFoundError(Exception):
         message (str): Explanation of the error
     """
 
-  def __init__(self, queue_name: str, message: str = None):
+  def __init__(self, queue_name: str, message: Optional[str] = None):
     self.queue_name = queue_name
     if message is None:
       message = f"Queue '{queue_name}' does not exist"
@@ -213,8 +213,7 @@ class QueuePublisher:
     try:
       queue = rabbitpy.Queue(self.connection.channel, self.queue_name)
       queue.declare(passive=True)
-      # Queue exists, just reference it
-      queue = rabbitpy.Queue(self.connection.channel, self.queue_name)
+      # Queue exists, log warning but keep using the same queue object
       log.warning(f"Queue '{self.queue_name}' already exists use existing constraints instead of requested: {self.queue_size}")
     except Exception:
       log.debug(f"Queue '{self.queue_name}' doesn't exist, creating with constraints: {self.queue_size}")
@@ -249,6 +248,8 @@ class QueuePublisher:
             Exception: If connection cannot be established
         """
     # First ensure we have a valid connection
+    if self.connection is None:
+      raise RuntimeError("Connection not established.")
     self.connection._ensure_connected()
 
     # Then check if the queue exists
@@ -377,7 +378,7 @@ class QueueConsumer:
     self.uri = uri
     self.queue_size = queue_size
     self.connection: Optional[QueueConnection] = None
-    self._queue = None
+    self._queue: Optional[rabbitpy.Queue] = None
 
   def __enter__(self) -> "QueueConsumer":
     """Enter context manager - establishes connection and sets up queue."""
@@ -418,8 +419,8 @@ class QueueConsumer:
     try:
       queue = rabbitpy.Queue(self.connection.channel, self.queue_name)
       queue.declare(passive=True)
-      # Queue exists, just reference it
-      self._queue = rabbitpy.Queue(self.connection.channel, self.queue_name)
+      # Queue exists, use the same queue object
+      self._queue = queue
       log.warning(f"Queue '{self.queue_name}' already exists. Do not recreate it.")
     except Exception:
       # Queue doesn't exist, reconnect and create with constraints
@@ -436,7 +437,7 @@ class QueueConsumer:
     # Set prefetch count
     self.connection.channel.prefetch_count(1)
 
-  def read(self, timeout: Optional[float] = None) -> Optional[Union[dict, str]]:
+  def read(self, timeout: Optional[float] = None) -> Optional[Union[Dict[Any, Any], str]]:
     """Read one message from queue with automatic reconnection handling.
 
         Reads a single message from the queue and automatically acknowledges it.
@@ -490,9 +491,10 @@ class QueueConsumer:
 
         # Try to parse as JSON, fallback to string
         try:
-          return json.loads(body)
+          parsed = json.loads(body)
+          return parsed if isinstance(parsed, dict) else str(body)
         except json.JSONDecodeError:
-          return body
+          return str(body)
 
       except StopIteration:
         # No messages available
@@ -507,7 +509,7 @@ class QueueConsumer:
 
     return None
 
-  def read_continuous(self) -> Generator[Union[dict, str], None, None]:
+  def read_continuous(self) -> Generator[Union[Dict[Any, Any], str], None, None]:
     """Generator that continuously reads messages with automatic reconnection.
 
         Yields messages from the queue indefinitely until interrupted or an
