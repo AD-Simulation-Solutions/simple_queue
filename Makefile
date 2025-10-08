@@ -6,9 +6,10 @@ VENV_DIR = ./venv
 PYTHON = $(VENV_DIR)/bin/python
 PIP = $(VENV_DIR)/bin/pip
 PYTEST = $(PYTHON) -m pytest
-YAPF = $(PYTHON) -m yapf
+AUTOPEP8 = $(PYTHON) -m autopep8
 FLAKE8 = $(PYTHON) -m flake8
 MYPY = $(PYTHON) -m mypy
+PYLINT = $(PYTHON) -m pylint
 
 # Source directories
 SRC_DIR = simple_queue
@@ -23,8 +24,8 @@ help:
 	@echo "  install     - Install dependencies in venv"
 	@echo "  install-dev - Install dev dependencies in venv"
 	@echo "  test        - Run tests with coverage"
-	@echo "  lint        - Run all linting (flake8 + mypy)"
-	@echo "  format      - Format code with yapf"
+	@echo "  lint        - Run all linting (flake8, pylint, mypy)"
+	@echo "  format      - Format code with autopep8"
 	@echo "  format-check- Check if code is formatted"
 	@echo "  integration-test - Run integration tests with RabbitMQ"
 	@echo "  clean       - Clean up generated files"
@@ -60,33 +61,27 @@ test: venv
 	@echo "Running tests..."
 	$(PYTEST) $(TEST_DIR) --cov=$(SRC_DIR) --cov-report=html --cov-report=term
 
-# Run linting (flake8 + mypy)
+# Run linting (flake8, pylint, mypy)
 .PHONY: lint
-lint: lint-flake8 lint-mypy
-
-# Run flake8 linting
-.PHONY: lint-flake8
-lint-flake8: venv
+lint: venv
 	@echo "Running flake8 linting..."
 	$(FLAKE8) $(SRC_DIR) $(TEST_DIR) $(EXAMPLES_DIR)
-
-# Run mypy type checking
-.PHONY: lint-mypy
-lint-mypy: venv
+	@echo "Running pylint linting..."
+	$(PYLINT) $(SRC_DIR) $(TEST_DIR) $(EXAMPLES_DIR)
 	@echo "Running mypy type checking..."
 	$(MYPY) $(SRC_DIR) --ignore-missing-imports
 
-# Format code with yapf
+# Format code with autopep8
 .PHONY: format
 format: venv
-	@echo "Formatting code with yapf..."
-	$(YAPF) --in-place --recursive $(SRC_DIR) $(TEST_DIR) $(EXAMPLES_DIR)
+	@echo "Formatting code with autopep8..."
+	$(AUTOPEP8) --in-place --recursive $(SRC_DIR) $(TEST_DIR) $(EXAMPLES_DIR)
 
 # Check if code is formatted
 .PHONY: format-check
 format-check: venv
 	@echo "Checking code formatting..."
-	$(YAPF) --diff --recursive $(SRC_DIR) $(TEST_DIR) $(EXAMPLES_DIR)
+	$(AUTOPEP8) --diff --recursive $(SRC_DIR) $(TEST_DIR) $(EXAMPLES_DIR)
 
 # Run all checks (format, lint, test)
 .PHONY: all

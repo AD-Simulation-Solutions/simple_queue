@@ -79,14 +79,19 @@ class TestQueuePublisher:
     mock_connection.channel = mock_channel
     publisher.connection = mock_connection
 
-    # Mock queue and exchange
-    mock_queue = Mock()
+    # Mock queue - need two separate instances for the two calls
+    mock_queue_passive = Mock()
+    mock_queue_create = Mock()
+    mock_queue_class.side_effect = [mock_queue_passive, mock_queue_create]
+
+    # Mock exchange
     mock_exchange = Mock()
-    mock_queue_class.return_value = mock_queue
     mock_exchange_class.return_value = mock_exchange
 
     # Make the first queue.declare(passive=True) fail to simulate queue doesn't exist
-    mock_queue.declare.side_effect = [Exception("Queue not found"), None]
+    # Use the actual AMQPNotFound exception class
+    import rabbitpy.exceptions
+    mock_queue_passive.declare.side_effect = rabbitpy.exceptions.AMQPNotFound()
 
     publisher._setup_queue()
 
@@ -105,17 +110,16 @@ class TestQueuePublisher:
         max_length=1000,
         arguments={"x-overflow": "reject-publish"},
     )
-    # Verify declare was called twice: once with passive=True, once without
-    assert mock_queue.declare.call_count == 2
-    mock_queue.declare.assert_any_call(passive=True)
-    mock_queue.declare.assert_any_call()
+    # Verify declare was called: once with passive=True on first queue, once without on second
+    mock_queue_passive.declare.assert_called_once_with(passive=True)
+    mock_queue_create.declare.assert_called_once()
 
     # Verify exchange creation
     mock_exchange_class.assert_called_once_with(mock_channel, "test_queue_exchange")
     mock_exchange.declare.assert_called_once()
 
-    # Verify binding
-    mock_queue.bind.assert_called_once_with(mock_exchange, "test_queue")
+    # Verify binding (should use the created queue)
+    mock_queue_create.bind.assert_called_once_with(mock_exchange, "test_queue")
 
     # Verify publisher confirms enabled
     mock_channel.enable_publisher_confirms.assert_called_once()

@@ -191,13 +191,10 @@ class TestQueueConnection:
       # Should not raise exception
       conn.close()
 
-      # Verify channel close was attempted (but connection close won't be
-      # called due to exception handling)
+      # Verify both channel and connection close were attempted
+      # The new implementation uses separate try/finally blocks
       mock_channel.close.assert_called_once()
-      # The current implementation catches all exceptions, so
-      # connection.close() won't be called
-      # if channel.close() throws an exception
-      mock_connection.close.assert_not_called()
+      mock_connection.close.assert_called_once()
 
   def test_close_handles_channel_exception_but_closes_connection(self):
     """Test that close() handles channel exception but still tries to close
@@ -221,12 +218,10 @@ class TestQueueConnection:
       # Should not raise exception
       conn.close()
 
-      # Verify both were attempted (current implementation catches all
-      # exceptions in one block)
+      # Verify both were attempted - new implementation uses separate try/finally blocks
+      # so connection.close() is called even if channel.close() fails
       mock_channel.close.assert_called_once()
-      # Due to the current implementation, connection.close won't be called
-      # if channel.close fails
-      mock_connection.close.assert_not_called()
+      mock_connection.close.assert_called_once()
 
   def test_close_handles_none_objects(self):
     """Test that close() handles None channel/connection gracefully"""

@@ -36,7 +36,7 @@ class TestPublisherExample:
     assert mock_publisher.push.call_count == 100
 
     # Verify messages have correct format
-    expected_calls = [call({"content": f"Message #{i+1}"}) for i in range(100)]
+    expected_calls = [call({"content": f"Message #{i + 1}"}) for i in range(100)]
     mock_publisher.push.assert_has_calls(expected_calls)
 
     # Verify sleep was called 100 times with 0.5 seconds

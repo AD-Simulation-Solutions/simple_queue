@@ -2,6 +2,7 @@ import rabbitpy
 import json
 import time
 import logging
+import threading
 from contextlib import contextmanager
 from typing import Optional, Any, Generator, Union, Dict
 
@@ -50,6 +51,8 @@ class QueueConnection:
     self.uri = uri
     self.connection = None
     self.channel = None
+    self._closing = False
+    self._lock = threading.Lock()
     self._connect()
 
   def _connect(self) -> None:
@@ -61,17 +64,18 @@ class QueueConnection:
         Raises:
             Exception: If connection to RabbitMQ fails
         """
-    try:
-      if self.connection and not self.connection.closed:
-        self.connection.close()
-    except Exception as e:
-      log.debug(f"Error closing existing connection: {e}")
+    with self._lock:
+      if self._closing:
+        raise RuntimeError("Connection is closing")
 
-    self.connection = rabbitpy.Connection(self.uri)
-    self.channel = self.connection.channel()
-    log.debug(f"Connected to RabbitMQ: {self.uri}")
+      # Safely close existing connection
+      self._close_existing()
 
-  def _ensure_connected(self) -> None:
+      self.connection = rabbitpy.Connection(self.uri)
+      self.channel = self.connection.channel()
+      log.debug(f"Connected to RabbitMQ: {self.uri}")
+
+  def _ensure_connected(self, retry_count: int = 0, max_retries: int = 3) -> None:
     """Ensure connection is active, reconnect if needed.
 
         Checks if both connection and channel are open and functional.
@@ -79,13 +83,54 @@ class QueueConnection:
         This method is called before any RabbitMQ operation to ensure
         connectivity.
 
+        Args:
+            retry_count: Current retry attempt number (internal use)
+            max_retries: Maximum number of reconnection attempts
+
+        Raises:
+            ConnectionError: If reconnection fails after max_retries attempts
+
         Note:
             This method is idempotent - calling it multiple times
             when already connected has no effect.
+            Uses exponential backoff for retries with a maximum of 30 seconds.
         """
+    if retry_count >= max_retries:
+      raise ConnectionError(f"Failed to reconnect after {max_retries} attempts")
+
     if (not self.connection or self.connection.closed or not self.channel or self.channel.closed):
-      log.info("Connection lost, reconnecting...")
-      self._connect()
+      log.info(f"Connection lost, reconnecting... (attempt {retry_count + 1}/{max_retries})")
+      try:
+        self._connect()
+      except Exception as e:
+        log.error(f"Reconnection failed: {e}")
+        # Exponential backoff with max 30 seconds
+        delay = min(2**retry_count, 30)
+        log.info(f"Waiting {delay} seconds before retry...")
+        time.sleep(delay)
+        self._ensure_connected(retry_count + 1, max_retries)
+
+  def _close_existing(self) -> None:
+    """Safely close existing connection and channel.
+
+        Internal method to close existing resources before creating new ones.
+        Handles exceptions gracefully to ensure cleanup always completes.
+        """
+    try:
+      if self.channel and not self.channel.closed:
+        self.channel.close()
+    except Exception as e:
+      log.debug(f"Error closing channel: {e}")
+    finally:
+      self.channel = None
+
+    try:
+      if self.connection and not self.connection.closed:
+        self.connection.close()
+    except Exception as e:
+      log.debug(f"Error closing connection: {e}")
+    finally:
+      self.connection = None
 
   def close(self) -> None:
     """Close connection and channel gracefully.
@@ -98,13 +143,9 @@ class QueueConnection:
             After calling this method, the connection cannot be reused.
             A new QueueConnection instance must be created.
         """
-    try:
-      if self.channel and not self.channel.closed:
-        self.channel.close()
-      if self.connection and not self.connection.closed:
-        self.connection.close()
-    except Exception as e:
-      log.debug(f"Error closing connection: {e}")
+    with self._lock:
+      self._closing = True
+      self._close_existing()
 
 
 class QueuePublisher:
@@ -211,13 +252,15 @@ class QueuePublisher:
 
     # Check if queue exists, if not create with constraints
     try:
-      queue = rabbitpy.Queue(self.connection.channel, self.queue_name)
-      queue.declare(passive=True)
-      # Queue exists, log warning but keep using the same queue object
+      # Always create a new queue object with the current channel
+      temp_queue = rabbitpy.Queue(self.connection.channel, self.queue_name)
+      temp_queue.declare(passive=True)
+      # Queue exists, use this queue object
+      queue = temp_queue
       log.warning(f"Queue '{self.queue_name}' already exists use existing constraints instead of requested: {self.queue_size}")
-    except Exception:
-      log.debug(f"Queue '{self.queue_name}' doesn't exist, creating with constraints: {self.queue_size}")
+    except rabbitpy.exceptions.AMQPNotFound:
       # Queue doesn't exist, reconnect and create with constraints
+      log.debug(f"Queue '{self.queue_name}' doesn't exist, creating with constraints: {self.queue_size}")
       self.connection._connect()
       queue = rabbitpy.Queue(
           self.connection.channel,
@@ -227,6 +270,10 @@ class QueuePublisher:
           arguments={"x-overflow": "reject-publish"},
       )
       queue.declare()
+      log.info(f"Created new queue '{self.queue_name}'")
+    except Exception as e:
+      log.error(f"Failed to setup queue: {e}")
+      raise
 
     # Declare exchange and bind queue
     exchange = rabbitpy.Exchange(self.connection.channel, self._exchange_name)
@@ -313,16 +360,16 @@ class QueuePublisher:
                    f"{message_body[:100]}...")
           return True
         else:
-          log.warning(f"Publish failed (attempt {attempt+1}/{self.retry_times})")
+          log.warning(f"Publish failed (attempt {attempt + 1}/{self.retry_times})")
       except QueueNotFoundError as e:
         raise e
       except Exception as e:
-        log.warning(f"Publish error (attempt {attempt+1}/{self.retry_times}): {e} for message {message_body}")
+        log.warning(f"Publish error (attempt {attempt + 1}/{self.retry_times}): {e} for message {message_body}")
 
       if attempt < self.retry_times - 1:
         log.debug(f"Retrying publish in {self.retry_delay} seconds...")
         time.sleep(self.retry_delay)
-        log.debug(f"Retrying publish no {attempt+1}")
+        log.debug(f"Retrying publish no {attempt + 1}")
 
     log.error(f"Failed to publish after {self.retry_times} attempts")
     return False
@@ -417,13 +464,15 @@ class QueueConsumer:
 
     # Check if queue exists, if not create with constraints
     try:
-      queue = rabbitpy.Queue(self.connection.channel, self.queue_name)
-      queue.declare(passive=True)
-      # Queue exists, use the same queue object
-      self._queue = queue
+      # Always create a new queue object with the current channel
+      temp_queue = rabbitpy.Queue(self.connection.channel, self.queue_name)
+      temp_queue.declare(passive=True)
+      # Queue exists, update reference only if successful
+      self._queue = temp_queue
       log.warning(f"Queue '{self.queue_name}' already exists. Do not recreate it.")
-    except Exception:
+    except rabbitpy.exceptions.AMQPNotFound:
       # Queue doesn't exist, reconnect and create with constraints
+      log.debug(f"Queue '{self.queue_name}' doesn't exist, creating...")
       self.connection._connect()
       self._queue = rabbitpy.Queue(
           self.connection.channel,
@@ -433,6 +482,10 @@ class QueueConsumer:
           arguments={"x-overflow": "reject-publish"},
       )
       self._queue.declare()
+      log.info(f"Created new queue '{self.queue_name}'")
+    except Exception as e:
+      log.error(f"Failed to setup queue: {e}")
+      raise
 
     # Set prefetch count
     self.connection.channel.prefetch_count(1)
@@ -500,7 +553,7 @@ class QueueConsumer:
         # No messages available
         return None
       except Exception as e:
-        log.warning(f"Read error (attempt {retry+1}/{max_retries}): {e}")
+        log.warning(f"Read error (attempt {retry + 1}/{max_retries}): {e}")
         if retry < max_retries - 1:
           time.sleep(1)
           # Reconnect will happen on next iteration

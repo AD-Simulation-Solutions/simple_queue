@@ -75,12 +75,15 @@ class TestQueueConsumer:
     mock_connection.channel = mock_channel
     consumer.connection = mock_connection
 
-    # Mock queue
-    mock_queue = Mock()
-    mock_queue_class.return_value = mock_queue
+    # Mock queue - need two separate instances for the two calls
+    mock_queue_passive = Mock()
+    mock_queue_create = Mock()
+    mock_queue_class.side_effect = [mock_queue_passive, mock_queue_create]
 
     # Make the first queue.declare(passive=True) fail to simulate queue doesn't exist
-    mock_queue.declare.side_effect = [Exception("Queue not found"), None]
+    # Use the actual AMQPNotFound exception class
+    import rabbitpy.exceptions
+    mock_queue_passive.declare.side_effect = rabbitpy.exceptions.AMQPNotFound()
 
     consumer._setup_queue()
 
@@ -99,16 +102,15 @@ class TestQueueConsumer:
         max_length=1000,
         arguments={"x-overflow": "reject-publish"},
     )
-    # Verify declare was called twice: once with passive=True, once without
-    assert mock_queue.declare.call_count == 2
-    mock_queue.declare.assert_any_call(passive=True)
-    mock_queue.declare.assert_any_call()
+    # Verify declare was called: once with passive=True on first queue, once without on second
+    mock_queue_passive.declare.assert_called_once_with(passive=True)
+    mock_queue_create.declare.assert_called_once()
 
     # Verify prefetch count set
     mock_channel.prefetch_count.assert_called_once_with(1)
 
-    # Verify queue is stored
-    assert consumer._queue == mock_queue
+    # Verify queue is stored (should be the second queue object)
+    assert consumer._queue == mock_queue_create
 
   def test_read_json_message_success(self):
     """Test reading a JSON message successfully"""

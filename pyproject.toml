@@ -37,9 +37,11 @@ dependencies = [
 dev = [
     "pytest>=6.0",
     "pytest-cov>=2.0",
-    "black>=21.0",
+    "autopep8>=2.0",
     "flake8>=3.8",
+    "Flake8-pyproject>=1.2.0",
     "mypy>=0.800",
+    "pylint>=3.0",
 ]
 
 [project.scripts]
@@ -65,14 +67,15 @@ testpaths = [
   "tests",
 ]
 
-[tool.yapf]
-based_on_style = "pep8"
-indent_width = 2
-column_limit = 150
+[tool.autopep8]
+max_line_length = 150
+indent_size = 2
+aggressive = 1
 
 [tool.flake8]
 max-line-length = 150
-extend-ignore = ["E203", "W503", "E111", "E114"]
+extend-ignore = ["E203", "W503", "E501"]
+per-file-ignores = []
 indent-size = 2
 
 [tool.mypy]
@@ -80,3 +83,18 @@ python_version = "3.9"
 warn_return_any = true
 warn_unused_configs = true
 ignore_missing_imports = true
+
+[tool.pylint.format]
+max-line-length = 150
+indent-string = "  "
+indent-after-paren = 2
+
+[tool.pylint.messages_control]
+disable = [
+  "C0114",  # missing-module-docstring
+  "C0115",  # missing-class-docstring
+  "C0116",  # missing-function-docstring
+]
+
+[tool.pylint.basic]
+good-names = ["i", "j", "k", "ex", "_", "e", "id", "log"]

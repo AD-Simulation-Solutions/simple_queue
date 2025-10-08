@@ -20,9 +20,9 @@ def main():
     print(f"✅ Publisher initialized for queue '{queue_name}' with overflow protection")
     for i in range(100):
       print(f"📤 Sending: {i}")
-      success = queue.push({"content": f"Message #{i+1}"})
+      success = queue.push({"content": f"Message #{i + 1}"})
       if not success:
-        print(f"❌ Failed to send message #{i+1}")
+        print(f"❌ Failed to send message #{i + 1}")
       time.sleep(0.5)
     print("✅ Finished sending messages")
 
