@@ -1,74 +1,48 @@
-"""
-Pytest configuration and fixtures for simple_queue tests
-"""
-
+"""Test configuration and fixtures for simple_queue tests."""
 import pytest
-from unittest.mock import Mock
+from unittest.mock import MagicMock
 
 
 @pytest.fixture
-def mock_rabbitmq_connection():
-  """Fixture providing a mock RabbitMQ connection"""
-  mock_connection = Mock()
-  mock_channel = Mock()
-  mock_connection.channel.return_value = mock_channel
-  mock_connection.closed = False
-  mock_channel.closed = False
-  return mock_connection, mock_channel
+def mock_redis_client():
+  """Create a mock Redis client with common methods."""
+  mock_client = MagicMock()
+  mock_client.ping.return_value = True
+  mock_client.get.return_value = None
+  mock_client.set.return_value = True
+  mock_client.exists.return_value = True
+  mock_client.llen.return_value = 0
+  mock_client.rpush.return_value = 1
+  mock_client.blpop.return_value = None
+  mock_client.close.return_value = None
+  return mock_client
 
 
 @pytest.fixture
-def mock_queue():
-  """Fixture providing a mock RabbitMQ queue"""
-  mock_queue = Mock()
-  return mock_queue
+def redis_uri():
+  """Standard Redis URI for testing."""
+  return "redis://localhost:6379/0"
 
 
 @pytest.fixture
-def mock_exchange():
-  """Fixture providing a mock RabbitMQ exchange"""
-  mock_exchange = Mock()
-  return mock_exchange
+def queue_name():
+  """Standard queue name for testing."""
+  return "test_queue"
 
 
 @pytest.fixture
-def mock_message():
-  """Fixture providing a mock RabbitMQ message"""
-  mock_message = Mock()
-  mock_message.publish.return_value = True
-  return mock_message
+def queue_size():
+  """Standard queue size for testing."""
+  return 100
 
 
 @pytest.fixture
-def sample_queue_config():
-  """Fixture providing sample queue configuration"""
-  return {
-      "queue_name": "test_queue",
-      "uri": "amqp://guest:guest@localhost:5672/",
-      "queue_size": 1000,
-      "retry_times": 3,
-      "retry_delay": 1.0,
-  }
+def retry_times():
+  """Standard retry times for testing."""
+  return 3
 
 
 @pytest.fixture
-def sample_messages():
-  """Fixture providing sample test messages"""
-  return [
-      {
-          "id": 1,
-          "content": "Hello World"
-      },
-      {
-          "id": 2,
-          "content": "Test Message"
-      },
-      "Simple string message",
-      [1, 2, 3, "list message"],
-      {
-          "nested": {
-              "data": True
-          },
-          "array": [1, 2, 3]
-      },
-  ]
+def retry_delay():
+  """Standard retry delay for testing."""
+  return 0.1

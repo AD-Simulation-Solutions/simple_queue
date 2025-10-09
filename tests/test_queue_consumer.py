@@ -1,392 +1,383 @@
-"""
-Tests for QueueConsumer class
-"""
-
-import json
+"""Tests for QueueConsumer class."""
 import pytest
-from unittest.mock import Mock, patch
+import json
+from unittest.mock import patch, MagicMock
 from simple_queue.core import QueueConsumer
 
 
 class TestQueueConsumer:
-  """Test cases for QueueConsumer class"""
+  """Test suite for QueueConsumer class."""
 
-  def test_init_sets_attributes(self):
-    """Test that __init__ sets all attributes correctly"""
-    queue_name = "test_queue"
-    uri = "amqp://localhost:5672"
-    queue_size = 1000
-
-    consumer = QueueConsumer(queue_name, uri, queue_size)
+  def test_init_sets_attributes(self, queue_name, redis_uri, queue_size):
+    """Test that __init__ sets all attributes correctly."""
+    consumer = QueueConsumer(queue_name, redis_uri, queue_size)
 
     assert consumer.queue_name == queue_name
-    assert consumer.uri == uri
+    assert consumer.uri == redis_uri
     assert consumer.queue_size == queue_size
     assert consumer.connection is None
-    assert consumer._queue is None
+    assert consumer._config_key == f"{queue_name}:config"
 
-  @patch("simple_queue.core.QueueConnection")
-  def test_enter_creates_connection_and_sets_up_queue(self, mock_queue_conn_class):
-    """Test that __enter__ creates connection and sets up queue"""
-    mock_connection = Mock()
-    mock_queue_conn_class.return_value = mock_connection
+  @patch('simple_queue.core.QueueConnection')
+  def test_enter_creates_connection(self, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that __enter__ creates connection and sets up queue."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    mock_connection_class.return_value = mock_conn_instance
 
-    consumer = QueueConsumer("test_queue", "amqp://localhost:5672", 1000)
+    consumer = QueueConsumer(queue_name, redis_uri, queue_size)
+    result = consumer.__enter__()
 
-    with patch.object(consumer, "_setup_queue") as mock_setup:
-      result = consumer.__enter__()
+    assert consumer.connection is not None
+    assert result is consumer
+    mock_connection_class.assert_called_once_with(redis_uri)
 
-      # Verify connection was created
-      mock_queue_conn_class.assert_called_once_with("amqp://localhost:5672")
-      assert consumer.connection == mock_connection
+  @patch('simple_queue.core.QueueConnection')
+  def test_exit_closes_connection(self, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that __exit__ closes the connection."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    mock_connection_class.return_value = mock_conn_instance
 
-      # Verify setup was called
-      mock_setup.assert_called_once()
-
-      # Verify it returns self
-      assert result == consumer
-
-  def test_exit_closes_connection(self):
-    """Test that __exit__ closes connection"""
-    consumer = QueueConsumer("test_queue", "amqp://localhost:5672", 1000)
-    mock_connection = Mock()
-    consumer.connection = mock_connection
-
+    consumer = QueueConsumer(queue_name, redis_uri, queue_size)
+    consumer.__enter__()
     consumer.__exit__(None, None, None)
 
-    mock_connection.close.assert_called_once()
+    mock_conn_instance.close.assert_called_once()
 
-  def test_exit_handles_none_connection(self):
-    """Test that __exit__ handles None connection gracefully"""
-    consumer = QueueConsumer("test_queue", "amqp://localhost:5672", 1000)
-    consumer.connection = None
+  @patch('simple_queue.core.QueueConnection')
+  def test_setup_queue_loads_existing_config(self, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that _setup_queue loads existing config."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    existing_config = json.dumps({'max_length': 200})
+    mock_redis_client.get.return_value = existing_config
+    mock_connection_class.return_value = mock_conn_instance
 
-    # Should not raise exception
-    consumer.__exit__(None, None, None)
+    consumer = QueueConsumer(queue_name, redis_uri, 100)
+    consumer.__enter__()
 
-  @patch("simple_queue.core.rabbitpy.Queue")
-  def test_setup_queue_creates_queue(self, mock_queue_class):
-    """Test that _setup_queue creates queue and sets prefetch"""
-    consumer = QueueConsumer("test_queue", "amqp://localhost:5672", 1000)
+    assert consumer.queue_size == 200
 
-    # Mock connection and channel
-    mock_connection = Mock()
-    mock_channel = Mock()
-    mock_connection.channel = mock_channel
-    consumer.connection = mock_connection
+  @patch('simple_queue.core.QueueConnection')
+  def test_setup_queue_creates_new_config_if_none(self, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that _setup_queue creates new config when none exists."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    mock_redis_client.get.return_value = None
+    mock_connection_class.return_value = mock_conn_instance
 
-    # Mock queue - need two separate instances for the two calls
-    mock_queue_passive = Mock()
-    mock_queue_create = Mock()
-    mock_queue_class.side_effect = [mock_queue_passive, mock_queue_create]
+    consumer = QueueConsumer(queue_name, redis_uri, queue_size)
+    consumer.__enter__()
 
-    # Make the first queue.declare(passive=True) fail to simulate queue doesn't exist
-    # Use the actual AMQPNotFound exception class
-    import rabbitpy.exceptions
-    mock_queue_passive.declare.side_effect = rabbitpy.exceptions.AMQPNotFound()
+    expected_config = json.dumps({'max_length': queue_size})
+    mock_redis_client.set.assert_called_with(f"{queue_name}:config", expected_config)
 
-    consumer._setup_queue()
+  @patch('simple_queue.core.QueueConnection')
+  def test_read_returns_dict_message(self, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that read returns a dict message correctly."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    message = {"key": "value", "number": 42}
+    mock_redis_client.blpop.return_value = (queue_name.encode(), json.dumps(message).encode())
+    mock_connection_class.return_value = mock_conn_instance
 
-    # Verify connection check
-    mock_connection._ensure_connected.assert_called_once()
+    consumer = QueueConsumer(queue_name, redis_uri, queue_size)
+    consumer.__enter__()
 
-    # Verify queue creation - first call is passive check, second call is actual creation
-    assert mock_queue_class.call_count == 2
-    # First call: passive check
-    mock_queue_class.assert_any_call(mock_channel, "test_queue")
-    # Second call: actual creation (happens in except block since passive check fails)
-    mock_queue_class.assert_any_call(
-        mock_channel,
-        "test_queue",
-        durable=True,
-        max_length=1000,
-        arguments={"x-overflow": "reject-publish"},
-    )
-    # Verify declare was called: once with passive=True on first queue, once without on second
-    mock_queue_passive.declare.assert_called_once_with(passive=True)
-    mock_queue_create.declare.assert_called_once()
+    result = consumer.read(timeout=5)
 
-    # Verify prefetch count set
-    mock_channel.prefetch_count.assert_called_once_with(1)
+    assert result == message
+    mock_redis_client.blpop.assert_called_once_with(queue_name, timeout=5)
 
-    # Verify queue is stored (should be the second queue object)
-    assert consumer._queue == mock_queue_create
+  @patch('simple_queue.core.QueueConnection')
+  def test_read_returns_string_message(self, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that read returns a string message correctly."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    message = "plain text message"
+    mock_redis_client.blpop.return_value = (queue_name.encode(), message.encode())
+    mock_connection_class.return_value = mock_conn_instance
 
-  def test_read_json_message_success(self):
-    """Test reading a JSON message successfully"""
-    consumer = QueueConsumer("test_queue", "amqp://localhost:5672", 1000)
+    consumer = QueueConsumer(queue_name, redis_uri, queue_size)
+    consumer.__enter__()
 
-    # Mock connection and queue
-    mock_connection = Mock()
-    mock_queue = Mock()
-    consumer.connection = mock_connection
-    consumer._queue = mock_queue
+    result = consumer.read(timeout=5)
 
-    # Mock message
-    mock_message = Mock()
-    test_data = {"key": "value", "number": 42}
-    mock_message.body.decode.return_value = json.dumps(test_data)
-    mock_queue.consume_messages.return_value = iter([mock_message])
+    assert result == message
 
-    result = consumer.read()
+  @patch('simple_queue.core.QueueConnection')
+  def test_read_returns_list_as_string(self, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that read returns list JSON as string (not dict)."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    message = [1, 2, 3, "test"]
+    mock_redis_client.blpop.return_value = (queue_name.encode(), json.dumps(message).encode())
+    mock_connection_class.return_value = mock_conn_instance
 
-    # Verify connection check
-    mock_connection._ensure_connected.assert_called_once()
+    consumer = QueueConsumer(queue_name, redis_uri, queue_size)
+    consumer.__enter__()
 
-    # Verify message was acknowledged
-    mock_message.ack.assert_called_once()
+    result = consumer.read(timeout=5)
 
-    # Verify JSON was parsed correctly
-    assert result == test_data
+    # Lists should be returned as strings according to the code logic
+    assert isinstance(result, str)
 
-  def test_read_string_message_success(self):
-    """Test reading a string message successfully"""
-    consumer = QueueConsumer("test_queue", "amqp://localhost:5672", 1000)
+  @patch('simple_queue.core.QueueConnection')
+  def test_read_returns_none_on_timeout(self, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that read returns None when timeout occurs."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    mock_redis_client.blpop.return_value = None
+    mock_connection_class.return_value = mock_conn_instance
 
-    # Mock connection and queue
-    mock_connection = Mock()
-    mock_queue = Mock()
-    consumer.connection = mock_connection
-    consumer._queue = mock_queue
+    consumer = QueueConsumer(queue_name, redis_uri, queue_size)
+    consumer.__enter__()
 
-    # Mock message with non-JSON content
-    mock_message = Mock()
-    test_data = "Hello, World!"
-    mock_message.body.decode.return_value = test_data
-    mock_queue.consume_messages.return_value = iter([mock_message])
+    result = consumer.read(timeout=5)
 
-    result = consumer.read()
-
-    # Verify connection check
-    mock_connection._ensure_connected.assert_called_once()
-
-    # Verify message was acknowledged
-    mock_message.ack.assert_called_once()
-
-    # Verify string was returned as-is
-    assert result == test_data
-
-  def test_read_no_messages_available(self):
-    """Test read when no messages are available"""
-    consumer = QueueConsumer("test_queue", "amqp://localhost:5672", 1000)
-
-    # Mock connection and queue
-    mock_connection = Mock()
-    mock_queue = Mock()
-    consumer.connection = mock_connection
-    consumer._queue = mock_queue
-
-    # Mock empty iterator
-    mock_queue.consume_messages.return_value = iter([])
-
-    result = consumer.read()
-
-    # Verify connection check
-    mock_connection._ensure_connected.assert_called_once()
-
-    # Should return None when no messages
     assert result is None
 
-  @patch("simple_queue.core.time.sleep")
-  def test_read_retries_on_exception(self, mock_sleep):
-    """Test read retries on exception"""
-    consumer = QueueConsumer("test_queue", "amqp://localhost:5672", 1000)
+  @patch('simple_queue.core.QueueConnection')
+  def test_read_with_no_timeout(self, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that read uses 0 timeout when None is provided."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    message = "test"
+    mock_redis_client.blpop.return_value = (queue_name.encode(), message.encode())
+    mock_connection_class.return_value = mock_conn_instance
 
-    # Mock connection and queue
-    mock_connection = Mock()
-    mock_queue = Mock()
-    consumer.connection = mock_connection
-    consumer._queue = mock_queue
+    consumer = QueueConsumer(queue_name, redis_uri, queue_size)
+    consumer.__enter__()
 
-    # Mock message for successful attempt
-    mock_message = Mock()
-    mock_message.body.decode.return_value = "test message"
+    consumer.read()
 
-    # First two attempts fail, third succeeds
-    mock_queue.consume_messages.side_effect = [
-        Exception("Connection error"),
-        Exception("Another error"),
-        iter([mock_message]),
+    mock_redis_client.blpop.assert_called_once_with(queue_name, timeout=0)
+
+  @patch('simple_queue.core.QueueConnection')
+  @patch('simple_queue.core.time.sleep')
+  def test_read_retries_on_error(self, mock_sleep, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that read retries on errors."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    message = "test message"
+    # First attempt fails, second succeeds
+    mock_redis_client.blpop.side_effect = [
+        Exception("Network error"),
+        (queue_name.encode(), message.encode())
     ]
+    mock_connection_class.return_value = mock_conn_instance
 
-    result = consumer.read()
+    consumer = QueueConsumer(queue_name, redis_uri, queue_size)
+    consumer.__enter__()
 
-    # Verify retries
-    assert mock_queue.consume_messages.call_count == 3
-    assert mock_sleep.call_count == 2  # Sleep between retries
+    result = consumer.read(timeout=5)
+
+    assert result == message
     mock_sleep.assert_called_with(1)
 
-    # Should succeed on third attempt
-    assert result == "test message"
-    mock_message.ack.assert_called_once()
+  @patch('simple_queue.core.QueueConnection')
+  @patch('simple_queue.core.time.sleep')
+  def test_read_raises_after_max_retries(self, mock_sleep, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that read raises exception after max retries on the third attempt."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    # First 2 attempts fail, third attempt raises
+    mock_redis_client.blpop.side_effect = [
+        Exception("Error 1"),
+        Exception("Error 2"),
+        Exception("Persistent error")
+    ]
+    mock_connection_class.return_value = mock_conn_instance
 
-  @patch("simple_queue.core.time.sleep")
-  def test_read_fails_after_all_retries(self, mock_sleep):
-    """Test read fails after all retries exhausted"""
-    consumer = QueueConsumer("test_queue", "amqp://localhost:5672", 1000)
-
-    # Mock connection and queue
-    mock_connection = Mock()
-    mock_queue = Mock()
-    consumer.connection = mock_connection
-    consumer._queue = mock_queue
-
-    # All attempts fail
-    mock_queue.consume_messages.side_effect = Exception("Persistent error")
+    consumer = QueueConsumer(queue_name, redis_uri, queue_size)
+    consumer.__enter__()
 
     with pytest.raises(Exception, match="Persistent error"):
-      consumer.read()
+      consumer.read(timeout=5)
 
-    # Verify all retries were attempted
-    assert mock_queue.consume_messages.call_count == 3
-    assert mock_sleep.call_count == 2  # Sleep between retries
+    # Should retry 3 times
+    assert mock_redis_client.blpop.call_count == 3
+    # Should sleep twice (after first and second failure)
+    assert mock_sleep.call_count == 2
 
-  @patch("simple_queue.core.time.sleep")
-  def test_read_continuous_yields_messages(self, mock_sleep):
-    """Test read_continuous yields messages continuously"""
-    consumer = QueueConsumer("test_queue", "amqp://localhost:5672", 1000)
+  @patch('simple_queue.core.QueueConnection')
+  @patch('simple_queue.core.time.sleep')
+  def test_read_returns_none_after_retries_without_raise(
+          self, mock_sleep, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that read returns None after retries if no exception on last attempt."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    # All attempts return None (timeout), but don't raise
+    mock_redis_client.blpop.return_value = None
+    mock_connection_class.return_value = mock_conn_instance
 
-    # Mock connection and queue
-    mock_connection = Mock()
-    mock_queue = Mock()
-    consumer.connection = mock_connection
-    consumer._queue = mock_queue
+    consumer = QueueConsumer(queue_name, redis_uri, queue_size)
+    consumer.__enter__()
 
-    # Mock messages
-    mock_message1 = Mock()
-    mock_message1.body.decode.return_value = json.dumps({"id": 1})
-    mock_message2 = Mock()
-    mock_message2.body.decode.return_value = "string message"
-    mock_message3 = Mock()
-    mock_message3.body.decode.return_value = json.dumps({"id": 3})
+    # Force an error on first 2 attempts, None on third
+    mock_redis_client.blpop.side_effect = [
+        Exception("Error 1"),
+        Exception("Error 2"),
+        None  # Last attempt succeeds but returns None
+    ]
 
-    # Mock consume_messages to return messages then raise KeyboardInterrupt
-    def mock_consume_messages():
-      yield mock_message1
-      yield mock_message2
-      yield mock_message3
-      raise KeyboardInterrupt("User stopped")
+    result = consumer.read(timeout=5)
 
-    mock_queue.consume_messages.return_value = mock_consume_messages()
+    assert result is None
+    assert mock_redis_client.blpop.call_count == 3
 
-    messages = []
+  @patch('simple_queue.core.QueueConnection')
+  def test_read_continuous_yields_messages(self, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that read_continuous yields messages continuously."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    messages = [
+        {"msg": 1},
+        {"msg": 2},
+        None  # Simulate timeout, should continue
+    ]
+    mock_redis_client.blpop.side_effect = [
+        (queue_name.encode(), json.dumps(messages[0]).encode()),
+        (queue_name.encode(), json.dumps(messages[1]).encode()),
+        None,
+        KeyboardInterrupt()  # Stop iteration
+    ]
+    mock_connection_class.return_value = mock_conn_instance
+
+    consumer = QueueConsumer(queue_name, redis_uri, queue_size)
+    consumer.__enter__()
+
+    results = []
     try:
-      for message in consumer.read_continuous():
-        messages.append(message)
-    except StopIteration:
+      for msg in consumer.read_continuous():
+        results.append(msg)
+    except KeyboardInterrupt:
       pass
 
-    # Verify all messages were yielded and acknowledged
-    assert len(messages) == 3
-    assert messages[0] == {"id": 1}
-    assert messages[1] == "string message"
-    assert messages[2] == {"id": 3}
+    assert len(results) == 2
+    assert results[0] == messages[0]
+    assert results[1] == messages[1]
 
-    mock_message1.ack.assert_called_once()
-    mock_message2.ack.assert_called_once()
-    mock_message3.ack.assert_called_once()
+  @patch('simple_queue.core.QueueConnection')
+  def test_read_continuous_stops_on_keyboard_interrupt(self, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that read_continuous stops gracefully on KeyboardInterrupt."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    mock_redis_client.blpop.side_effect = KeyboardInterrupt()
+    mock_connection_class.return_value = mock_conn_instance
 
-  @patch("simple_queue.core.time.sleep")
-  def test_read_continuous_handles_message_processing_error(self, mock_sleep):
-    """Test read_continuous handles errors in message processing"""
-    consumer = QueueConsumer("test_queue", "amqp://localhost:5672", 1000)
+    consumer = QueueConsumer(queue_name, redis_uri, queue_size)
+    consumer.__enter__()
 
-    # Mock connection and queue
-    mock_connection = Mock()
-    mock_queue = Mock()
-    consumer.connection = mock_connection
-    consumer._queue = mock_queue
+    results = []
+    for msg in consumer.read_continuous():
+      results.append(msg)
 
-    # Mock messages - one good, one that causes error, one good
-    mock_message1 = Mock()
-    mock_message1.body.decode.return_value = "good message 1"
+    assert len(results) == 0  # Should break without yielding
 
-    mock_message2 = Mock()
-    mock_message2.body.decode.side_effect = Exception("Decode error")
+  @patch('simple_queue.core.QueueConnection')
+  @patch('simple_queue.core.time.sleep')
+  def test_read_continuous_handles_errors(self, mock_sleep, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that read_continuous handles errors and continues."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    message = {"msg": "success"}
+    mock_redis_client.blpop.side_effect = [
+        Exception("Network error"),
+        (queue_name.encode(), json.dumps(message).encode()),
+        KeyboardInterrupt()
+    ]
+    mock_connection_class.return_value = mock_conn_instance
 
-    mock_message3 = Mock()
-    mock_message3.body.decode.return_value = "good message 2"
+    consumer = QueueConsumer(queue_name, redis_uri, queue_size)
+    consumer.__enter__()
 
-    def mock_consume_messages():
-      yield mock_message1
-      yield mock_message2
-      yield mock_message3
-      raise KeyboardInterrupt("User stopped")
+    results = []
+    for msg in consumer.read_continuous():
+      results.append(msg)
 
-    mock_queue.consume_messages.return_value = mock_consume_messages()
-
-    messages = []
-    try:
-      for message in consumer.read_continuous():
-        messages.append(message)
-    except StopIteration:
-      pass
-
-    # Should get good messages, error message should be acknowledged but not yielded
-    assert len(messages) == 2
-    assert messages[0] == "good message 1"
-    assert messages[1] == "good message 2"
-
-    # All messages should be acknowledged
-    mock_message1.ack.assert_called_once()
-    mock_message2.ack.assert_called_once()
-    mock_message3.ack.assert_called_once()
-
-  @patch("simple_queue.core.time.sleep")
-  def test_read_continuous_handles_connection_error(self, mock_sleep):
-    """Test read_continuous handles connection errors and reconnects"""
-    consumer = QueueConsumer("test_queue", "amqp://localhost:5672", 1000)
-
-    # Mock connection and queue
-    mock_connection = Mock()
-    mock_queue = Mock()
-    consumer.connection = mock_connection
-    consumer._queue = mock_queue
-
-    # Mock message for successful attempt
-    mock_message = Mock()
-    mock_message.body.decode.return_value = "test message"
-
-    call_count = 0
-
-    def mock_consume_messages():
-      nonlocal call_count
-      call_count += 1
-      if call_count == 1:
-        raise Exception("Connection lost")
-      elif call_count == 2:
-        yield mock_message
-        raise KeyboardInterrupt("User stopped")
-
-    mock_queue.consume_messages.side_effect = mock_consume_messages
-
-    messages = []
-    try:
-      for message in consumer.read_continuous():
-        messages.append(message)
-    except StopIteration:
-      pass
-
-    # Should recover and get the message
-    assert len(messages) == 1
-    assert messages[0] == "test message"
-
-    # Should have slept for reconnection
+    assert len(results) == 1
+    assert results[0] == message
     mock_sleep.assert_called_with(5)
-    mock_message.ack.assert_called_once()
 
-  @patch("simple_queue.core.QueueConnection")
-  def test_context_manager_usage(self, mock_queue_conn_class):
-    """Test using QueueConsumer as context manager"""
-    mock_connection = Mock()
-    mock_queue_conn_class.return_value = mock_connection
+  @patch('simple_queue.core.QueueConnection')
+  def test_read_continuous_yields_string_messages(self, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that read_continuous yields string messages."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    message = "plain text"
+    mock_redis_client.blpop.side_effect = [
+        (queue_name.encode(), message.encode()),
+        KeyboardInterrupt()
+    ]
+    mock_connection_class.return_value = mock_conn_instance
 
-    consumer = QueueConsumer("test_queue", "amqp://localhost:5672", 1000)
+    consumer = QueueConsumer(queue_name, redis_uri, queue_size)
+    consumer.__enter__()
 
-    with patch.object(consumer, "_setup_queue"):
-      with consumer as cons:
-        assert cons == consumer
-        assert consumer.connection == mock_connection
+    results = []
+    for msg in consumer.read_continuous():
+      results.append(msg)
 
-      # Verify connection was closed
-      mock_connection.close.assert_called_once()
+    assert len(results) == 1
+    assert results[0] == message
+
+  @patch('simple_queue.core.QueueConnection')
+  def test_read_continuous_continues_on_none_result(self, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that read_continuous continues when blpop returns None."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    message = {"msg": "test"}
+    mock_redis_client.blpop.side_effect = [
+        None,  # Timeout
+        None,  # Another timeout
+        (queue_name.encode(), json.dumps(message).encode()),
+        KeyboardInterrupt()
+    ]
+    mock_connection_class.return_value = mock_conn_instance
+
+    consumer = QueueConsumer(queue_name, redis_uri, queue_size)
+    consumer.__enter__()
+
+    results = []
+    for msg in consumer.read_continuous():
+      results.append(msg)
+
+    assert len(results) == 1
+    assert results[0] == message
+
+  @patch('simple_queue.core.QueueConnection')
+  def test_read_calls_ensure_connected(self, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that read calls _ensure_connected."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    message = "test"
+    mock_redis_client.blpop.return_value = (queue_name.encode(), message.encode())
+    mock_connection_class.return_value = mock_conn_instance
+
+    consumer = QueueConsumer(queue_name, redis_uri, queue_size)
+    consumer.__enter__()
+
+    consumer.read(timeout=5)
+
+    mock_conn_instance._ensure_connected.assert_called()
+
+  @patch('simple_queue.core.QueueConnection')
+  def test_read_continuous_calls_ensure_connected(self, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that read_continuous calls _ensure_connected."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    mock_redis_client.blpop.side_effect = [
+        (queue_name.encode(), b"test"),
+        KeyboardInterrupt()
+    ]
+    mock_connection_class.return_value = mock_conn_instance
+
+    consumer = QueueConsumer(queue_name, redis_uri, queue_size)
+    consumer.__enter__()
+
+    for _ in consumer.read_continuous():
+      pass
+
+    mock_conn_instance._ensure_connected.assert_called()

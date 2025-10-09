@@ -1,111 +1,102 @@
-"""
-Tests for context manager functions (queue_publisher and queue_consumer)
-"""
-
+"""Tests for context manager functions."""
 import pytest
-from unittest.mock import Mock, patch
+from unittest.mock import patch, MagicMock
 from simple_queue.core import queue_publisher, queue_consumer
 
 
-class TestContextManagers:
-  """Test cases for context manager functions"""
+class TestQueuePublisherContextManager:
+  """Test suite for queue_publisher context manager function."""
 
-  @patch("simple_queue.core.QueuePublisher")
-  def test_queue_publisher_context_manager(self, mock_publisher_class):
-    """Test queue_publisher context manager function"""
-    # Mock the QueuePublisher instance with MagicMock to support magic methods
-    mock_publisher_instance = Mock()
-    mock_publisher_instance.__enter__ = Mock(return_value=mock_publisher_instance)
-    mock_publisher_instance.__exit__ = Mock(return_value=None)
-    mock_publisher_class.return_value = mock_publisher_instance
+  @patch('simple_queue.core.QueueConnection')
+  def test_queue_publisher_context_manager(self, mock_connection_class, queue_name, redis_uri,
+                                           queue_size, retry_times, retry_delay, mock_redis_client):
+    """Test that queue_publisher context manager works correctly."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    mock_connection_class.return_value = mock_conn_instance
 
-    queue_name = "test_queue"
-    uri = "amqp://localhost:5672"
-    queue_size = 1000
-    retry_times = 3
-    retry_delay = 1.5
+    with queue_publisher(queue_name, redis_uri, queue_size, retry_times, retry_delay) as pub:
+      assert pub is not None
+      assert pub.queue_name == queue_name
+      assert pub.connection is not None
 
-    # Use the context manager
-    with queue_publisher(queue_name, uri, queue_size, retry_times, retry_delay) as pub:
-      # Verify QueuePublisher was created with correct parameters
-      mock_publisher_class.assert_called_once_with(queue_name, uri, queue_size, retry_times, retry_delay)
+    # Connection should be closed after exiting context
+    mock_conn_instance.close.assert_called_once()
 
-      # Verify __enter__ was called
-      mock_publisher_instance.__enter__.assert_called_once()
+  @patch('simple_queue.core.QueueConnection')
+  def test_queue_publisher_closes_on_exception(self, mock_connection_class, queue_name, redis_uri,
+                                               queue_size, retry_times, retry_delay, mock_redis_client):
+    """Test that queue_publisher closes connection even on exception."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    mock_connection_class.return_value = mock_conn_instance
 
-      # Verify the yielded object is the publisher instance
-      assert pub == mock_publisher_instance
+    with pytest.raises(ValueError):
+      with queue_publisher(queue_name, redis_uri, queue_size, retry_times, retry_delay):
+        raise ValueError("Test error")
 
-    # Verify __exit__ was called after context
-    mock_publisher_instance.__exit__.assert_called_once()
+    # Connection should still be closed
+    mock_conn_instance.close.assert_called_once()
 
-  @patch("simple_queue.core.QueueConsumer")
-  def test_queue_consumer_context_manager(self, mock_consumer_class):
-    """Test queue_consumer context manager function"""
-    # Mock the QueueConsumer instance with magic methods
-    mock_consumer_instance = Mock()
-    mock_consumer_instance.__enter__ = Mock(return_value=mock_consumer_instance)
-    mock_consumer_instance.__exit__ = Mock(return_value=None)
-    mock_consumer_class.return_value = mock_consumer_instance
+  @patch('simple_queue.core.QueueConnection')
+  def test_queue_publisher_can_push_messages(self, mock_connection_class, queue_name, redis_uri,
+                                             queue_size, retry_times, retry_delay, mock_redis_client):
+    """Test that messages can be pushed using context manager."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    mock_redis_client.llen.return_value = 0
+    mock_redis_client.exists.return_value = True
+    mock_connection_class.return_value = mock_conn_instance
 
-    queue_name = "test_queue"
-    uri = "amqp://localhost:5672"
-    queue_size = 1000
+    with queue_publisher(queue_name, redis_uri, queue_size, retry_times, retry_delay) as pub:
+      result = pub.push("test message")
 
-    # Use the context manager
-    with queue_consumer(queue_name, uri, queue_size) as cons:
-      # Verify QueueConsumer was created with correct parameters
-      mock_consumer_class.assert_called_once_with(queue_name, uri, queue_size)
+    assert result is True
+    mock_redis_client.rpush.assert_called()
 
-      # Verify __enter__ was called
-      mock_consumer_instance.__enter__.assert_called_once()
 
-      # Verify the yielded object is the consumer instance
-      assert cons == mock_consumer_instance
+class TestQueueConsumerContextManager:
+  """Test suite for queue_consumer context manager function."""
 
-    # Verify __exit__ was called after context
-    mock_consumer_instance.__exit__.assert_called_once()
+  @patch('simple_queue.core.QueueConnection')
+  def test_queue_consumer_context_manager(self, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that queue_consumer context manager works correctly."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    mock_connection_class.return_value = mock_conn_instance
 
-  @patch("simple_queue.core.QueuePublisher")
-  def test_queue_publisher_context_manager_with_exception(self, mock_publisher_class):
-    """Test queue_publisher context manager handles exceptions properly"""
-    # Mock the QueuePublisher instance with magic methods
-    mock_publisher_instance = Mock()
-    mock_publisher_instance.__enter__ = Mock(return_value=mock_publisher_instance)
-    mock_publisher_instance.__exit__ = Mock(return_value=None)
-    mock_publisher_class.return_value = mock_publisher_instance
+    with queue_consumer(queue_name, redis_uri, queue_size) as cons:
+      assert cons is not None
+      assert cons.queue_name == queue_name
+      assert cons.connection is not None
 
-    # Test that exceptions are properly propagated and __exit__ is still called
-    with pytest.raises(ValueError, match="Test exception"):
-      with queue_publisher("test_queue", "amqp://localhost:5672", 1000, 3, 1.0) as _:
-        raise ValueError("Test exception")
+    # Connection should be closed after exiting context
+    mock_conn_instance.close.assert_called_once()
 
-    # Verify __exit__ was called even with exception
-    mock_publisher_instance.__exit__.assert_called_once()
-    # Check that __exit__ was called with exception info
-    call_args = mock_publisher_instance.__exit__.call_args[0]
-    assert call_args[0] == ValueError  # exc_type
-    assert str(call_args[1]) == "Test exception"  # exc_val
-    assert call_args[2] is not None  # exc_tb
+  @patch('simple_queue.core.QueueConnection')
+  def test_queue_consumer_closes_on_exception(self, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that queue_consumer closes connection even on exception."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    mock_connection_class.return_value = mock_conn_instance
 
-  @patch("simple_queue.core.QueueConsumer")
-  def test_queue_consumer_context_manager_with_exception(self, mock_consumer_class):
-    """Test queue_consumer context manager handles exceptions properly"""
-    # Mock the QueueConsumer instance with magic methods
-    mock_consumer_instance = Mock()
-    mock_consumer_instance.__enter__ = Mock(return_value=mock_consumer_instance)
-    mock_consumer_instance.__exit__ = Mock(return_value=None)
-    mock_consumer_class.return_value = mock_consumer_instance
+    with pytest.raises(ValueError):
+      with queue_consumer(queue_name, redis_uri, queue_size):
+        raise ValueError("Test error")
 
-    # Test that exceptions are properly propagated and __exit__ is still called
-    with pytest.raises(RuntimeError, match="Consumer error"):
-      with queue_consumer("test_queue", "amqp://localhost:5672", 1000) as _:
-        raise RuntimeError("Consumer error")
+    # Connection should still be closed
+    mock_conn_instance.close.assert_called_once()
 
-    # Verify __exit__ was called even with exception
-    mock_consumer_instance.__exit__.assert_called_once()
-    # Check that __exit__ was called with exception info
-    call_args = mock_consumer_instance.__exit__.call_args[0]
-    assert call_args[0] == RuntimeError  # exc_type
-    assert str(call_args[1]) == "Consumer error"  # exc_val
-    assert call_args[2] is not None  # exc_tb
+  @patch('simple_queue.core.QueueConnection')
+  def test_queue_consumer_can_read_messages(self, mock_connection_class, queue_name, redis_uri, queue_size, mock_redis_client):
+    """Test that messages can be read using context manager."""
+    mock_conn_instance = MagicMock()
+    mock_conn_instance.client = mock_redis_client
+    mock_redis_client.blpop.return_value = (queue_name.encode(), b"test message")
+    mock_connection_class.return_value = mock_conn_instance
+
+    with queue_consumer(queue_name, redis_uri, queue_size) as cons:
+      result = cons.read(timeout=5)
+
+    assert result == "test message"
+    mock_redis_client.blpop.assert_called()

@@ -1,10 +1,13 @@
 services:
-  rabbitmq:
-    image: rabbitmq:3.12-management
-    container_name: rabbitmq
+  redis:
+    image: redis:7-alpine
+    container_name: simple_queue_redis
     ports:
-      - "5672:5672"       # RabbitMQ messaging
-      - "15672:15672"     # RabbitMQ management UI
-    environment:
-      RABBITMQ_DEFAULT_USER: guest
-      RABBITMQ_DEFAULT_PASS: guest
+      - "6379:6379"    # Redis port
+    command: redis-server --appendonly yes
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s

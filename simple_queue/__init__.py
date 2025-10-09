@@ -1,7 +1,6 @@
-"""
-simple_queue - A simple RabbitMQ streaming library
+"""simple_queue - A simple Redis streaming library
 
-This package provides easy-to-use classes and context managers for RabbitMQ
+This package provides easy-to-use classes and context managers for Redis-based
 message publishing and consuming with automatic reconnection and error handling.
 """
 
@@ -10,6 +9,6 @@ from .core import queue_publisher, queue_consumer, QueuePublisher, QueueConsumer
 __version__ = "0.1.0"
 __author__ = "Alex"
 __email__ = ""
-__description__ = "A simple RabbitMQ streaming library"
+__description__ = "A simple Redis streaming library"
 
 __all__ = ["queue_publisher", "queue_consumer", "QueuePublisher", "QueueConsumer", "QueueNotFoundError"]

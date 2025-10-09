@@ -158,7 +158,7 @@ def run_benchmark(
 
   print("🚀 Starting performance benchmark")
   print(f"   Queue: {queue_name}")
-  print(f"   RabbitMQ URI: {rabbit_uri}")
+  print(f"   Redis URI: {rabbit_uri}")
   print(f"   Message size: {message_size} bytes")
   print(f"   Number of messages: {num_messages}")
   print(f"   Queue size: {queue_size}")
@@ -300,7 +300,7 @@ def main():
   # Required argument
   parser.add_argument(
       "rabbit_uri",
-      help="RabbitMQ connection URI (e.g., amqp://guest:guest@localhost:5672/)",
+      help="Redis connection URI (e.g., redis://localhost:6379/0)",
   )
 
   # Optional arguments with defaults

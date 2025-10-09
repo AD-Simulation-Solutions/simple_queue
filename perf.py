@@ -15,9 +15,9 @@ from simple_queue import queue_publisher, queue_consumer
 
 # Configuration
 QUEUE_NAME = "perf_test_queue"
-RABBIT_URI = "amqp://guest:guest@localhost:5672/"
-QUEUE_SIZE = 10000
-TOTAL_MESSAGES = 10000
+REDIS_URI = "redis://localhost:6380/0"
+QUEUE_SIZE = 1
+TOTAL_MESSAGES = 10
 NUM_PUBLISHERS = 3
 NUM_CONSUMERS = 3
 RETRY_TIMES = 3
@@ -34,7 +34,7 @@ def publisher_worker(worker_id, messages_per_worker, publish_counter, publish_di
     try:
         with queue_publisher(
             queue_name=QUEUE_NAME,
-            uri=RABBIT_URI,
+            uri=REDIS_URI,
             queue_size=QUEUE_SIZE,
             retry_times=RETRY_TIMES,
             retry_delay=RETRY_DELAY
@@ -75,7 +75,7 @@ def publisher_worker(worker_id, messages_per_worker, publish_counter, publish_di
     print(f"[Publisher {worker_id}] Finished - published {local_published} messages")
 
 
-def consumer_worker(worker_id, consume_counter, latency_list, stop_event, end_time_value):
+def consumer_worker(worker_id, consume_counter, latency_list, stop_event, end_time_value, consumed_ids):
     """Consumer process that reads messages from the queue."""
     print(f"[Consumer {worker_id}] Starting...")
     
@@ -85,7 +85,7 @@ def consumer_worker(worker_id, consume_counter, latency_list, stop_event, end_ti
     try:
         with queue_consumer(
             queue_name=QUEUE_NAME,
-            uri=RABBIT_URI,
+            uri=REDIS_URI,
             queue_size=QUEUE_SIZE
         ) as cons:
             for message in cons.read_continuous():
@@ -99,6 +99,14 @@ def consumer_worker(worker_id, consume_counter, latency_list, stop_event, end_ti
                     publish_time = message.get("timestamp")
                     
                     if msg_id and publish_time:
+                        # Check for duplicate consumption
+                        if msg_id in consumed_ids:
+                            print(f"[Consumer {worker_id}] ERROR: Duplicate message detected! ID: {msg_id}")
+                            raise AssertionError(f"Duplicate message consumed: {msg_id}")
+                        
+                        # Mark message as consumed
+                        consumed_ids[msg_id] = worker_id
+                        
                         # Calculate latency
                         latency_ms = (receive_time - publish_time) * 1000
                         local_latencies.append(latency_ms)
@@ -199,6 +207,7 @@ def main():
     consume_counter = multiprocessing.Value('i', 0)
     publish_dict = manager.dict()
     latency_list = manager.list()
+    consumed_ids = manager.dict()  # Track consumed message IDs to detect duplicates
     stop_event = multiprocessing.Event()
     end_time_value = multiprocessing.Value('d', 0.0)
     
@@ -211,7 +220,7 @@ def main():
     for i in range(NUM_CONSUMERS):
         process = multiprocessing.Process(
             target=consumer_worker,
-            args=(i, consume_counter, latency_list, stop_event, end_time_value)
+            args=(i, consume_counter, latency_list, stop_event, end_time_value, consumed_ids)
         )
         process.start()
         consumer_processes.append(process)

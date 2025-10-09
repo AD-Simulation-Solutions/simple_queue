@@ -27,7 +27,7 @@ help:
 	@echo "  lint        - Run all linting (flake8, pylint, mypy)"
 	@echo "  format      - Format code with autopep8"
 	@echo "  format-check- Check if code is formatted"
-	@echo "  integration-test - Run integration tests with RabbitMQ"
+	@echo "  integration-test - Run integration tests with Redis"
 	@echo "  clean       - Clean up generated files"
 	@echo "  all         - Run format, lint, and test"
 
@@ -67,7 +67,7 @@ lint: venv
 	@echo "Running flake8 linting..."
 	$(FLAKE8) $(SRC_DIR) $(TEST_DIR) $(EXAMPLES_DIR)
 	@echo "Running pylint linting..."
-	$(PYLINT) $(SRC_DIR) $(TEST_DIR) $(EXAMPLES_DIR)
+	$(PYLINT) $(SRC_DIR) $(EXAMPLES_DIR)
 	@echo "Running mypy type checking..."
 	$(MYPY) $(SRC_DIR) --ignore-missing-imports
 

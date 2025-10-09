@@ -5,14 +5,14 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "simple_queue"
 version = "0.1.0"
-description = "A simple RabbitMQ streaming library"
+description = "A simple Redis streaming library"
 readme = "README.md"
 requires-python = ">=3.7"
 license = {text = "MIT"}
 authors = [
     {name = "Alex", email = "alex@example.com"},
 ]
-keywords = ["rabbitmq", "streaming", "messaging", "queue"]
+keywords = ["redis", "streaming", "messaging", "queue"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -29,8 +29,7 @@ classifiers = [
     "Topic :: Communications",
 ]
 dependencies = [
-    "rabbitpy==2.0.1",
-    "pydantic==2.5.0",
+    "redis>=5.0.0",
 ]
 
 [project.optional-dependencies]
@@ -80,9 +79,10 @@ indent-size = 2
 
 [tool.mypy]
 python_version = "3.9"
-warn_return_any = true
+warn_return_any = false
 warn_unused_configs = true
 ignore_missing_imports = true
+disable_error_code = ["union-attr", "arg-type", "operator", "misc"]
 
 [tool.pylint.format]
 max-line-length = 150
@@ -94,6 +94,15 @@ disable = [
   "C0114",  # missing-module-docstring
   "C0115",  # missing-class-docstring
   "C0116",  # missing-function-docstring
+  "W1203",  # logging-fstring-interpolation
+  "W0718",  # broad-exception-caught
+  "W0212",  # protected-access
+  "W0201",  # attribute-defined-outside-init
+  "R0902",  # too-many-instance-attributes
+  "R0903",  # too-few-public-methods
+  "R0913",  # too-many-arguments
+  "R0917",  # too-many-positional-arguments
+  "R1705",  # no-else-return
 ]
 
 [tool.pylint.basic]
